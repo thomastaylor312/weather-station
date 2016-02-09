@@ -8,11 +8,11 @@ from evdev import InputDevice, list_devices, ecodes
 sense = SenseHat()
 
 # Make sure we can find the joystick
-found = False;
+found = False
 devices = [InputDevice(fn) for fn in list_devices()]
 for dev in devices:
     if dev.name == 'Raspberry Pi Sense HAT Joystick':
-        found = True;
+        found = True
         break
 
 if not(found):
