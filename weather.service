@@ -3,6 +3,8 @@ Description=Weather collection daemon for Sense Hat
 
 [Service]
 ExecStart=/usr/local/bin/weather
+User=pi
+Group=pi
 
 [Install]
 WantedBy=multi-user.target
