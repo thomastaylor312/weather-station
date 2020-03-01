@@ -169,7 +169,9 @@ while True:
             }
         }
     )
-    if not client.write_points(points, retention_policy='cleanup'):
+    try: 
+        client.write_points(points, retention_policy='cleanup')
+    except:
         logging.error("influxdb write not successful")
     time.sleep(120)
     
