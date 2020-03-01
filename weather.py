@@ -2,10 +2,20 @@
 import sys
 import time
 import threading
+import logging
+import board
+import adafruit_dht
+from datetime import datetime
 from sense_hat import SenseHat
 from evdev import InputDevice, list_devices, ecodes
+from influxdb import InfluxDBClient
 
 sense = SenseHat()
+dht = adafruit_dht.DHT22(board.D4)
+
+client = InfluxDBClient('localhost', 8086, 'root', 'root', 'weather')
+# TODO: Make logging configurable
+logging.basicConfig(level=logging.WARN)
 
 # Make sure we can find the joystick
 found = False
@@ -69,70 +79,134 @@ def display_rainbow(stopper):
         stopper.wait(2/1000.0)
         pass
 
-# Function for getting temperature
-def display_temperature(stopper):
-    sense.clear()
-    while not stopper.is_set():
-        sense.show_message('%.2f' % sense.get_temperature(), .1, (0, 0, 255))
-        stopper.wait(5)
-        pass
-
-# Function for getting pressure
-def display_pressure(stopper):
-    sense.clear()
-    while not stopper.is_set():
-        sense.show_message('%.2f' % sense.get_pressure(), .1, (0, 0, 255))
-        stopper.wait(5)
-        pass
-
-# Function for getting humidity
-def display_humidity(stopper):
-    sense.clear()
-    while not stopper.is_set():
-        sense.show_message('%.2f' % sense.get_humidity(), .1, (0, 0, 255))
-        stopper.wait(5)
-        pass
-    
-actions = [
-    lambda x: threading.Thread(target=display_rainbow, args=(x,)),
-    lambda x: threading.Thread(target=display_temperature, args=(x,)),
-    lambda x: threading.Thread(target=display_pressure, args=(x,)),
-    lambda x: threading.Thread(target=display_humidity, args=(x,))
-]
-
+# Grab pressure and humidity temps (because for some reason the first call
+# likes to return 0 sometimes)
+sense.get_temperature_from_humidity()
+sense.get_temperature_from_pressure()
 # Main event loop
-try:
-    current_item = 0
-    # Start on the default
-    current_stopper = threading.Event()
-    current_thread = actions[0](current_stopper)
-    current_thread.start()
-    for event in dev.read_loop():
-        if event.type == ecodes.EV_KEY and event.value == 1:
-            was_triggered = False
-            if event.code == ecodes.KEY_DOWN:
-                # Go to the thing before
-                if current_item == 0:
-                    current_item = len(actions) - 1
-                else:
-                    current_item -= 1
-                was_triggered = True
-            elif event.code == ecodes.KEY_UP:
-                # Go to the next thing
-                if current_item == len(actions) - 1:
-                    current_item = 0
-                else:
-                    current_item += 1
-                was_triggered = True
-            # Take care of stopping the old thread and starting a new one
-            if was_triggered:
-                current_stopper.set()
-                current_thread.join()
-                current_stopper = threading.Event()
-                current_thread = actions[current_item](current_stopper)
-                current_thread.start()
-except KeyboardInterrupt:
-    current_stopper.set()
-    current_thread.join()
-    sense.clear()
-    sys.exit()
+while True:
+    points = list()
+    # Use the current timestamp on all data points for consistency
+    t = datetime.utcnow().isoformat()
+    try:
+        temp = dht.temperature
+        humidity = dht.humidity
+        points.append(
+            {
+                "measurement": "temperature",
+                "tags": {
+                    "source": "dht22"
+                },
+                "time": t,
+                "fields": {
+                    "value": temp
+                }
+            }
+        )
+        points.append(
+            {
+                "measurement": "humidity",
+                "tags": {
+                    "source": "dht22"
+                },
+                "time": t,
+                "fields": {
+                    "value": humidity
+                }
+            }
+        )
+    except RuntimeError as error:
+        # This can happen a lot, so just skip this iteration
+        pass
+
+    points.append(
+        {
+            "measurement": "temperature",
+            "tags": {
+                "source": "sensehat",
+                "sensor": "humidity"
+            },
+            "time": t,
+            "fields": {
+                "value": sense.get_temperature_from_humidity()
+            }
+        }
+    )
+    points.append(
+        {
+            "measurement": "temperature",
+            "tags": {
+                "source": "sensehat",
+                "sensor": "pressure"
+            },
+            "time": t,
+            "fields": {
+                "value": sense.get_temperature_from_pressure()
+            }
+        }
+    )
+    points.append(
+        {
+            "measurement": "humidity",
+            "tags": {
+                "source": "sensehat"
+            },
+            "time": t,
+            "fields": {
+                "value": sense.get_humidity()
+            }
+        }
+    )
+    points.append(
+        {
+            "measurement": "pressure",
+            "tags": {
+                "source": "sensehat"
+            },
+            "time": t,
+            "fields": {
+                "value": sense.get_pressure()
+            }
+        }
+    )
+    if not client.write_points(points, retention_policy='cleanup'):
+        logging.error("influxdb write not successful")
+    time.sleep(120)
+    
+    
+# TODO: Spawn another thread for the display
+# try:
+#     current_item = 0
+#     # Start on the default
+#     current_stopper = threading.Event()
+#     current_thread = actions[0](current_stopper)
+#     current_thread.start()
+#     for event in dev.read_loop():
+#         if event.type == ecodes.EV_KEY and event.value == 1:
+#             was_triggered = False
+#             if event.code == ecodes.KEY_DOWN:
+#                 # Go to the thing before
+#                 if current_item == 0:
+#                     current_item = len(actions) - 1
+#                 else:
+#                     current_item -= 1
+#                 was_triggered = True
+#             elif event.code == ecodes.KEY_UP:
+#                 # Go to the next thing
+#                 if current_item == len(actions) - 1:
+#                     current_item = 0
+#                 else:
+#                     current_item += 1
+#                 was_triggered = True
+#             # Take care of stopping the old thread and starting a new one
+#             if was_triggered:
+#                 current_stopper.set()
+#                 current_thread.join()
+#                 current_stopper = threading.Event()
+#                 current_thread = actions[current_item](current_stopper)
+#                 current_thread.start()
+# except KeyboardInterrupt:
+#     current_stopper.set()
+#     current_thread.join()
+#     sense.clear()
+#     sys.exit()

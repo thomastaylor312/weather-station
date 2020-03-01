@@ -1,0 +1,8 @@
+[Unit]
+Description=Weather collection daemon for Sense Hat
+
+[Service]
+ExecStart=/usr/local/bin/weather
+
+[Install]
+WantedBy=multi-user.target
