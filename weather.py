@@ -88,6 +88,7 @@ while True:
     points = list()
     # Use the current timestamp on all data points for consistency
     t = datetime.utcnow().isoformat()
+    # TODO: Retry if read fails
     try:
         temp = dht.temperature
         humidity = dht.humidity
@@ -115,7 +116,7 @@ while True:
                 }
             }
         )
-    except RuntimeError as error:
+    except:
         # This can happen a lot, so just skip this iteration
         pass
 
